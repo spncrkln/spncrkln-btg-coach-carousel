@@ -4,7 +4,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 
 const TYPE_COLOR = {
   Hired: "--hired", Promoted: "--promoted", "Title Change": "--title", Interim: "--interim", Fired: "--fired",
-  Resigned: "--resigned", Retired: "--retired", Departed: "--departed", Candidate: "--candidate", "Passed Away": "--passed",
+  Resigned: "--resigned", Retired: "--retired", Departed: "--departed", "Passed Away": "--passed",
 };
 const cvar = (t) => `var(${TYPE_COLOR[t] || "--muted"})`;
 
@@ -179,11 +179,17 @@ function renderChips() {
   $("#typeChips").querySelectorAll(".chip").forEach((el) => el.onclick = () => { const t = el.dataset.t; S.typeOn.has(t) ? S.typeOn.delete(t) : S.typeOn.add(t); render(); });
 }
 const ARROW = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></svg>`;
+const srcA = (s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener"><em>${esc(s.source || "Source")}</em><span>${esc(s.title || s.url)}</span></a>`;
 function srcLinks(m) {
-  return (m.sources || []).map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener"><em>${esc(s.source || "Source")}</em><span>${esc(s.title || s.url)}</span></a>`).join("") || `<span class="ttl">No source link</span>`;
+  const all = m.sources || [];
+  if (!all.length) return `<span class="ttl">No source link</span>`;
+  const shown = all.slice(0, 2).map(srcA).join("");
+  const total = Math.max(m.source_count || 0, all.length);
+  if (all.length <= 2) return shown;
+  return `${shown}<details class="more"><summary>+ ${total - 2} more source${total - 2 === 1 ? "" : "s"}</summary>${all.slice(2).map(srcA).join("")}${total > all.length ? `<span class="ttl">Showing the first ${all.length} of ${total}.</span>` : ""}</details>`;
 }
 function card(m) {
-  const toLabel = m.to_team || ({ Retired: "Retired", Fired: "Out", Resigned: "Out", Departed: "Out", "Passed Away": "In memoriam", Candidate: "Candidate" }[m.move_type] || "TBD");
+  const toLabel = m.to_team || ({ Retired: "Retired", Fired: "Out", Resigned: "Out", Departed: "Out", "Passed Away": "In memoriam" }[m.move_type] || "TBD");
   const toLogo = m.to_team ? logo(m.to_team) : `<div class="mono none">—</div>`;
   const tracker = m.row && S.byRow.get(m.row);
   return `<article class="card ${m.status}" style="--c:${cvar(m.move_type)}">
@@ -242,6 +248,7 @@ function renderLog() {
   $("#logBody").innerHTML = `
     <p>Scans run automatically about every 4 hours. There's no cap on how many articles Claude reads: if one run can't finish within Netlify's 15-minute limit, it saves its progress and starts a follow-up run. Each one reads FootballScoop's homepage and Jobs Scoop pages, ESPN's college and NFL feeds, and Google News searches covering 247Sports, On3, school press releases, NFL and CFL staff news. Only articles that mention a coach from your tracker by name are sent to Claude.</p>
     <ul>${[...srcs.footballscoop.map((u) => "FootballScoop · " + u.replace("https://www.footballscoop.com", "")), ...srcs.feeds].map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
+    ${runs[0]?.nameSearch ? `<p>${esc(runs[0].nameSearch)}. Every coach in the tracker is also searched by name on a rotating basis, so a full pass of all ${S.roster.count?.toLocaleString() || ""} names takes about three scans.${runs[0].skippedOld ? ` Last scan skipped ${runs[0].skippedOld} move(s) your tracker already reflects.` : ""}</p>` : ""}
     ${runs.length ? `<table><thead><tr><th>Started</th><th>Trigger</th><th>Headlines</th><th>New</th><th>Coaching</th><th>Tracker names</th><th>Claude reads</th><th>New moves</th><th>Carried to next run</th><th>Issues</th></tr></thead><tbody>
     ${runs.map((r) => `<tr><td>${fmtTime(r.startedAt)}</td><td>${esc(r.trigger)}${r.chain ? ` (part ${r.chain + 1})` : ""}</td><td>${r.collected}</td><td>${r.newItems}</td><td>${r.relevant}</td><td>${r.withCandidates}</td><td>${r.claudeCalls}</td><td>${r.newMoves}</td><td>${r.remaining ?? 0}</td>
     <td>${r.errors?.length ? `<details><summary>${r.errors.length}</summary>${r.errors.map((e) => `<div>${esc(e)}</div>`).join("")}</details>` : "—"}</td></tr>`).join("")}</tbody></table>` : "<p>No scans have run yet.</p>"}`;

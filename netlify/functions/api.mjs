@@ -1,4 +1,7 @@
-import { getRoster, getMoves, setMoves, getMeta, setJSON } from "../lib/store.mjs";
+import { getRoster, getMoves, setMoves, getMeta, setMeta, setJSON } from "../lib/store.mjs";
+import { cleanMoves } from "../lib/scan.mjs";
+
+const SCHEMA = 2;
 import { getTeams } from "../lib/teams.mjs";
 import { MOVE_TYPES } from "../lib/claude.mjs";
 import { SCOOP_PAGES, RSS_FEEDS } from "../lib/sources.mjs";
@@ -11,7 +14,14 @@ export default async (req, context) => {
   const method = req.method;
   try {
     if (path === "state" && method === "GET") {
-      const [moves, meta, roster] = await Promise.all([getMoves(), getMeta(), getRoster()]);
+      let [moves, meta, roster] = await Promise.all([getMoves(), getMeta(), getRoster()]);
+      // One-time cleanup when the matching rules change: merge duplicates, drop Candidate cards and old news.
+      if ((meta.schema || 1) < SCHEMA && !meta.scanning) {
+        moves = cleanMoves(moves, roster.coaches);
+        await setMoves(moves);
+        meta = { ...(await getMeta()), schema: SCHEMA };
+        await setMeta(meta);
+      }
       return json({
         moves, meta, moveTypes: MOVE_TYPES,
         roster: { updatedAt: roster.updatedAt, source: roster.source, count: roster.coaches.length, coaches: roster.coaches },

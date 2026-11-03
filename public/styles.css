@@ -54,7 +54,7 @@ select { padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 8px;
 .seg button.on { background: var(--ink); color: var(--paper); }
 
 main { padding: 18px clamp(16px, 4vw, 48px) 40px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 14px; align-items: start; }
 @media (max-width: 460px) { .grid { grid-template-columns: 1fr; } }
 .empty { text-align: center; color: var(--muted); padding: 60px 20px; border: 1.5px dashed var(--line); border-radius: 14px; }
 .empty h3 { font: 700 26px "Barlow Condensed", sans-serif; text-transform: uppercase; color: var(--ink); margin: 0 0 6px; }
@@ -126,3 +126,8 @@ dialog h2 { font: 800 30px/1 "Barlow Condensed"; text-transform: uppercase; marg
 .timeline div::before { content: ""; position: absolute; left: -22px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
 .timeline small { color: var(--muted); display: block; }
 .close { float: right; border: 0; background: none; font-size: 26px; cursor: pointer; color: var(--muted); line-height: 1; }
+
+.srcs .more summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 12.5px; list-style: none; padding: 2px 0; }
+.srcs .more summary::-webkit-details-marker { display: none; }
+.srcs .more[open] summary { margin-bottom: 4px; }
+.srcs .more { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
