@@ -15,7 +15,7 @@ Tracks job changes (hires, firings, promotions, title changes, retirements, and 
 | Name | Required | Notes |
 | --- | --- | --- |
 | `BTG_CAROUSEL_ANTHROPIC_API_KEY` | Yes | Anthropic API key used only by this tool |
-| `BTG_CAROUSEL_MODEL` | No | Defaults to `claude-haiku-5-5`. Set to `claude-sonnet-5-5` for more careful matching at a higher cost |
+| `BTG_CAROUSEL_MODEL` | No | Defaults to `claude-sonnet-5-5` |
 
 ## Updating the coach list
 

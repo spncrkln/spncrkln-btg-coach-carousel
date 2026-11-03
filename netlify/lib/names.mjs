@@ -59,7 +59,7 @@ export function buildNameIndex(roster) {
   return idx;
 }
 
-export function findCandidates(text, idx, limit = 10) {
+export function findCandidates(text, idx, limit = 40) {
   const t = norm(text);
   const hits = new Map();
   for (const [variant, coaches] of idx) {

@@ -36,9 +36,9 @@ export default async (req, context) => {
 
     if (path === "scan" && method === "POST") {
       const meta = await getMeta();
-      if (meta.scanning && Date.now() - Date.parse(meta.scanning.startedAt) < 14 * 60e3) return json({ ok: false, message: "A scan is already running." });
+      if (meta.scanning && Date.now() - Date.parse(meta.scanning.startedAt) < 14.5 * 60e3) return json({ ok: false, message: "A scan is already running." });
       const last = meta.lastScan?.startedAt ? Date.parse(meta.lastScan.startedAt) : 0;
-      const wait = Math.ceil((last + 10 * 60e3 - Date.now()) / 60e3);
+      const wait = Math.ceil((last + 2 * 60e3 - Date.now()) / 60e3);
       if (wait > 0) return json({ ok: false, message: `Last scan was just run. Try again in ${wait} min.` });
       await fetch(`${url.origin}/.netlify/functions/scan-background`, { method: "POST", headers: { "x-scan-trigger": "manual" } });
       return json({ ok: true, message: "Scan started." });

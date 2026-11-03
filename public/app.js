@@ -240,10 +240,10 @@ function renderLog() {
   const runs = S.meta.runs || [];
   const srcs = S.sources || { footballscoop: [], feeds: [] };
   $("#logBody").innerHTML = `
-    <p>Scans run automatically about every 4 hours. Each one reads FootballScoop's homepage and Jobs Scoop pages, ESPN's college and NFL feeds, and Google News searches covering 247Sports, On3, school press releases, NFL and CFL staff news. Only articles that mention a coach from your tracker by name are sent to Claude.</p>
+    <p>Scans run automatically about every 4 hours. There's no cap on how many articles Claude reads: if one run can't finish within Netlify's 15-minute limit, it saves its progress and starts a follow-up run. Each one reads FootballScoop's homepage and Jobs Scoop pages, ESPN's college and NFL feeds, and Google News searches covering 247Sports, On3, school press releases, NFL and CFL staff news. Only articles that mention a coach from your tracker by name are sent to Claude.</p>
     <ul>${[...srcs.footballscoop.map((u) => "FootballScoop · " + u.replace("https://www.footballscoop.com", "")), ...srcs.feeds].map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
-    ${runs.length ? `<table><thead><tr><th>Started</th><th>Trigger</th><th>Headlines</th><th>New</th><th>Coaching</th><th>Tracker names</th><th>Claude reads</th><th>New moves</th><th>Issues</th></tr></thead><tbody>
-    ${runs.map((r) => `<tr><td>${fmtTime(r.startedAt)}</td><td>${esc(r.trigger)}</td><td>${r.collected}</td><td>${r.newItems}</td><td>${r.relevant}</td><td>${r.withCandidates}</td><td>${r.claudeCalls}</td><td>${r.newMoves}</td>
+    ${runs.length ? `<table><thead><tr><th>Started</th><th>Trigger</th><th>Headlines</th><th>New</th><th>Coaching</th><th>Tracker names</th><th>Claude reads</th><th>New moves</th><th>Carried to next run</th><th>Issues</th></tr></thead><tbody>
+    ${runs.map((r) => `<tr><td>${fmtTime(r.startedAt)}</td><td>${esc(r.trigger)}${r.chain ? ` (part ${r.chain + 1})` : ""}</td><td>${r.collected}</td><td>${r.newItems}</td><td>${r.relevant}</td><td>${r.withCandidates}</td><td>${r.claudeCalls}</td><td>${r.newMoves}</td><td>${r.remaining ?? 0}</td>
     <td>${r.errors?.length ? `<details><summary>${r.errors.length}</summary>${r.errors.map((e) => `<div>${esc(e)}</div>`).join("")}</details>` : "—"}</td></tr>`).join("")}</tbody></table>` : "<p>No scans have run yet.</p>"}`;
 }
 

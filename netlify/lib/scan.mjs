@@ -4,10 +4,14 @@ import { extractMoves } from "./claude.mjs";
 import { getRoster, getMoves, setMoves, getMeta, setMeta, getJSON, setJSON } from "./store.mjs";
 
 const UA = "Mozilla/5.0 (compatible; BTGCoachCarousel/1.0)";
-const MAX_CLAUDE_CALLS = 80;
-const CONCURRENCY = 4;
+// No cap on how many articles Claude reads. Netlify stops any single background run at 15 min,
+// so each run works for up to ~12 min, saves as it goes, then hands leftovers to a fresh run.
+const TIME_BUDGET_MS = 12 * 60e3;
+const SAVE_EVERY = 8;          // checkpoint moves + seen list every N Claude reads
+const CONCURRENCY = 6;
+const MAX_CHAIN = 25;          // follow-up runs allowed for one scan (~5 hours of reading)
 
-async function get(url, ms = 9000) {
+async function get(url, ms = 25000) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), ms);
   try {
@@ -70,7 +74,7 @@ export function parseScoopArticle(html) {
   const scope = art ? art[0] : html;
   const ps = [...scope.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)].map((m) => strip(m[1])).filter((p) => p.length > 30);
   body = ps.join("\n");
-  if (body.length < 200) body = strip(scope).slice(0, 9000);
+  if (body.length < 200) body = strip(scope).slice(0, 30000);
   return { title: title.replace(/\s*[-|]\s*FootballScoop.*$/i, ""), date: pub ? pub.slice(0, 10) : null, text: `${title}\n${body}` };
 }
 
@@ -123,21 +127,27 @@ export function mergeMove(moves, raw, coach, article, now) {
 }
 
 // Full scan: gather headlines, keep coaching-related ones, find roster names, ask Claude, save moves.
-export async function runScan(trigger = "manual") {
-  const startedAt = new Date().toISOString();
+// opts.chain = how many follow-up runs came before this one.
+export async function runScan(trigger = "manual", opts = {}) {
+  const t0 = Date.now();
+  const startedAt = new Date(t0).toISOString();
+  const chain = opts.chain || 0;
   const meta = await getMeta();
-  if (meta.scanning && Date.now() - Date.parse(meta.scanning.startedAt) < 14 * 60e3) return { skipped: "A scan is already running" };
-  meta.scanning = { startedAt, trigger, stage: "Collecting headlines" };
+  if (meta.scanning && Date.now() - Date.parse(meta.scanning.startedAt) < 14.5 * 60e3) return { skipped: "A scan is already running" };
+  meta.scanning = { startedAt, trigger, chain, stage: chain ? `Continuing (part ${chain + 1})` : "Collecting headlines" };
   await setMeta(meta);
 
-  const log = { startedAt, trigger, sources: {}, errors: [], collected: 0, newItems: 0, relevant: 0, withCandidates: 0, claudeCalls: 0, newMoves: 0, updatedMoves: 0 };
+  const log = { startedAt, trigger, chain, sources: {}, errors: [], collected: 0, newItems: 0, relevant: 0, withCandidates: 0, claudeCalls: 0, newMoves: 0, updatedMoves: 0, remaining: 0 };
   try {
     const roster = (await getRoster()).coaches;
     const idx = buildNameIndex(roster);
     const seen = await getJSON("seen", {});
+    // Leftovers from an earlier run that ran out of time are read first, then fresh headlines.
+    const backlog = await getJSON("backlog", []);
     const all = await collect(log);
     log.collected = all.length;
-    const fresh = all.filter((it) => !seen[it.key]);
+    const keys = new Set();
+    const fresh = [...backlog, ...all].filter((it) => !seen[it.key] && !keys.has(it.key) && keys.add(it.key));
     log.newItems = fresh.length;
     const relevant = fresh.filter((it) => MOVE_WORDS.test(it.title + " " + it.text));
     log.relevant = relevant.length;
@@ -145,19 +155,22 @@ export async function runScan(trigger = "manual") {
     meta.scanning.stage = `Reading ${relevant.length} articles`; await setMeta(meta);
     const moves = await getMoves();
     const now = new Date().toISOString();
-    let i = 0;
+    let saving = Promise.resolve();
+    const checkpoint = () => (saving = saving.then(() => Promise.all([setMoves(moves), setJSON("seen", seen)])).catch((e) => log.errors.push("Save: " + e.message)));
+
+    let i = 0, stopped = false;
     const worker = async () => {
-      while (i < relevant.length) {
+      while (i < relevant.length && !stopped) {
+        if (Date.now() - t0 > TIME_BUDGET_MS) { stopped = true; break; }
         const it = relevant[i++];
         try {
           if (it.needsBody) {
             const a = parseScoopArticle(await get(it.url));
-            it.title = a.title || it.title; it.text = a.text || it.text; it.date = a.date || it.date;
+            it.title = a.title || it.title; it.text = a.text || it.text; it.date = a.date || it.date; it.needsBody = false;
           }
           const cands = findCandidates(it.title + "\n" + it.text, idx);
           if (!cands.length) { seen[it.key] = now; continue; }
           log.withCandidates++;
-          if (log.claudeCalls >= MAX_CLAUDE_CALLS) continue; // leave unseen; picked up next run
           log.claudeCalls++;
           const found = await extractMoves(it, cands);
           for (const raw of found) {
@@ -166,29 +179,34 @@ export async function runScan(trigger = "manual") {
             if (mergeMove(moves, raw, coach, it, now)) log.newMoves++; else log.updatedMoves++;
           }
           seen[it.key] = now;
+          if (log.claudeCalls % SAVE_EVERY === 0) checkpoint();
         } catch (e) {
           log.errors.push(`${it.title.slice(0, 60)}: ${e.message}`);
-          if (/API_KEY|Claude API 401/.test(e.message)) { i = relevant.length; }
+          if (/API_KEY|Claude API 40[13]/.test(e.message)) { stopped = true; }
         }
       }
     };
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    await saving;
 
-    // Mark irrelevant headlines as seen too, and forget anything older than 30 days.
+    // Irrelevant headlines are marked seen; unread relevant ones become the backlog for the next run.
     for (const it of fresh) if (!relevant.includes(it)) seen[it.key] = now;
-    const cutoff = Date.now() - 30 * 864e5;
+    const left = relevant.filter((it) => !seen[it.key]).slice(0, 2000)
+      .map(({ url, title, source, date, text, needsBody, key }) => ({ url, title, source, date, text: (text || "").slice(0, 30000), needsBody, key }));
+    log.remaining = left.length;
+    const cutoff = Date.now() - 60 * 864e5;
     for (const k of Object.keys(seen)) if (Date.parse(seen[k]) < cutoff) delete seen[k];
-    await setJSON("seen", seen);
-    await setMoves(moves);
+    await Promise.all([setJSON("seen", seen), setMoves(moves), setJSON("backlog", left)]);
   } catch (e) {
     log.errors.push(e.message);
   }
   log.finishedAt = new Date().toISOString();
-  log.errors = log.errors.slice(0, 25);
+  log.errors = log.errors.slice(0, 40);
   const m2 = await getMeta();
   delete m2.scanning;
   m2.lastScan = log;
-  m2.runs = [log, ...(m2.runs || [])].slice(0, 30);
+  m2.runs = [log, ...(m2.runs || [])].slice(0, 50);
   await setMeta(m2);
+  log.continue = log.remaining > 0 && chain < MAX_CHAIN && !log.errors.some((e) => /API_KEY|Claude API 40[13]/.test(e));
   return log;
 }

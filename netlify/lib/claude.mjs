@@ -39,25 +39,42 @@ function profile(c) {
 export async function extractMoves(article, candidates) {
   const key = process.env.BTG_CAROUSEL_ANTHROPIC_API_KEY;
   if (!key) throw new Error("BTG_CAROUSEL_ANTHROPIC_API_KEY is not set");
-  const model = process.env.BTG_CAROUSEL_MODEL || "claude-haiku-5-5";
+  const model = process.env.BTG_CAROUSEL_MODEL || "claude-sonnet-5-5";
   const user = `ARTICLE
 Source: ${article.source}
 Date: ${article.date || "unknown"}
 Title: ${article.title}
 URL: ${article.url}
 Text:
-${(article.text || article.title).slice(0, 9000)}
+${(article.text || article.title).slice(0, 30000)}
 
 CANDIDATE COACHES
 ${candidates.map(profile).join("\n")}`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model, max_tokens: 1500, system: SYSTEM, messages: [{ role: "user", content: user }] }),
-  });
-  if (!res.ok) throw new Error(`Claude API ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const data = await res.json();
+  // Generous per-call timeout, with retries on rate limits, overloads, and network hiccups.
+  let data, lastErr;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 180000);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST", signal: ctl.signal,
+        headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({ model, max_tokens: 8000, system: SYSTEM, messages: [{ role: "user", content: user }] }),
+      });
+      if (res.ok) { data = await res.json(); break; }
+      const body = (await res.text()).slice(0, 300);
+      lastErr = new Error(`Claude API ${res.status}: ${body}`);
+      if (![408, 409, 429, 500, 502, 503, 504, 529].includes(res.status)) throw lastErr; // bad key, bad request: don't retry
+      const ra = Number(res.headers.get("retry-after"));
+      await new Promise((r) => setTimeout(r, (ra > 0 ? ra * 1000 : 0) || 4000 * 2 ** attempt));
+    } catch (e) {
+      if (e === lastErr) throw e;
+      lastErr = e.name === "AbortError" ? new Error("Claude API call timed out after 3 min") : e;
+      await new Promise((r) => setTimeout(r, 4000 * 2 ** attempt));
+    } finally { clearTimeout(t); }
+  }
+  if (!data) throw lastErr || new Error("Claude API failed");
   const text = (data.content || []).map((b) => b.text || "").join("");
   const m = text.match(/\[[\s\S]*\]/);
   if (!m) return [];
