@@ -1,0 +1,7 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+  command = "echo 'static site + functions'"
+
+[functions]
+  node_bundler = "esbuild"

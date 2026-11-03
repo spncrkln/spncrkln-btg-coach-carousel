@@ -1,0 +1,11 @@
+{
+  "name": "btg-coach-carousel",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Beyond the Grave: tracks job moves for every coach in the Hargrave outreach tracker",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BTG Coach Carousel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23b8321f'/><path d='M8 16h13m-4-5 5 5-5 5' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="eyebrow">Beyond the Grave · Wild Oak Productions</div>
+    <h1>Coach Carousel</h1>
+    <p class="sub" id="rosterLine">Loading tracker…</p>
+  </div>
+  <div class="actions">
+    <div class="scanbox">
+      <div id="scanStatus" class="scanstatus">—</div>
+      <button id="scanBtn" class="btn primary">Scan now</button>
+    </div>
+    <label class="btn ghost" id="uploadLbl">Upload tracker .xlsx
+      <input type="file" id="xlsxInput" accept=".xlsx,.xlsm,.xls" hidden>
+    </label>
+    <button id="addBtn" class="btn ghost">Log a move</button>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<section class="stats" id="stats"></section>
+
+<section class="controls">
+  <input id="q" type="search" placeholder="Search coach, school, team, title, or row #">
+  <div class="chips" id="typeChips"></div>
+  <div class="row">
+    <select id="level"><option value="">All levels</option><option value="NFL">NFL</option><option value="FBS">FBS</option><option value="FCS">FCS</option><option value="Other">Other college / CFL / HS</option></select>
+    <select id="status"><option value="active">New + Confirmed</option><option value="new">Needs review</option><option value="confirmed">Confirmed</option><option value="dismissed">Dismissed</option><option value="">Everything</option></select>
+    <select id="sort">
+      <option value="date-desc">Newest first</option><option value="date-asc">Oldest first</option>
+      <option value="name-asc">Coach A–Z</option><option value="row-asc">Spreadsheet row</option>
+      <option value="from-asc">From school A–Z</option><option value="to-asc">To school A–Z</option>
+      <option value="type-asc">Move type</option><option value="title-asc">New title A–Z</option>
+    </select>
+    <div class="seg" role="tablist"><button data-view="cards" class="on">Cards</button><button data-view="table">Table</button></div>
+  </div>
+</section>
+
+<main id="list"></main>
+
+<details class="log">
+  <summary>Scan history and sources</summary>
+  <div id="logBody"></div>
+</details>
+
+<dialog id="coachDlg"><div id="coachBody"></div></dialog>
+
+<dialog id="addDlg">
+  <form id="addForm" method="dialog">
+    <h2>Log a move</h2>
+    <p class="hint">For moves you spot on X, a podcast, or a phone call. Start typing a name to link it to the tracker row.</p>
+    <label>Coach<input name="coach_name" list="coachList" required autocomplete="off"></label>
+    <datalist id="coachList"></datalist>
+    <div class="two">
+      <label>Tracker row<input name="row" type="number" min="4"></label>
+      <label>Move type<select name="move_type" id="addType"></select></label>
+    </div>
+    <div class="two">
+      <label>From school/team<input name="from_team"></label>
+      <label>From title<input name="from_title"></label>
+    </div>
+    <div class="two">
+      <label>To school/team<input name="to_team"></label>
+      <label>New title<input name="to_title"></label>
+    </div>
+    <div class="two">
+      <label>Date<input name="effective_date" type="date"></label>
+      <label>Certainty<select name="certainty"><option>official</option><option selected>reported</option><option>rumored</option></select></label>
+    </div>
+    <label>Source link<input name="source_url" type="url" placeholder="https://"></label>
+    <label>Note<input name="summary"></label>
+    <div class="formbtns"><button value="cancel" class="btn ghost" formnovalidate>Cancel</button><button value="save" class="btn primary">Save move</button></div>
+  </form>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
