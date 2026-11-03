@@ -1,7 +1,7 @@
 import { getRoster, getMoves, setMoves, getMeta, setMeta, setJSON } from "../lib/store.mjs";
 import { cleanMoves } from "../lib/scan.mjs";
 
-const SCHEMA = 2;
+const SCHEMA = 3;
 import { getTeams } from "../lib/teams.mjs";
 import { MOVE_TYPES } from "../lib/claude.mjs";
 import { SCOOP_PAGES, RSS_FEEDS } from "../lib/sources.mjs";

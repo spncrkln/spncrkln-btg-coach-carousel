@@ -173,7 +173,12 @@ export function alreadyInTracker(m, coach) {
   return !t(coach.current) || (!!t(m.from_team) && !sameTeam(m.from_team, coach.current));
 }
 const isRecent = (m) => Date.now() - Date.parse(m.effective_date || 0) < 30 * 864e5;
-export const keepMove = (m, coach) => !alreadyInTracker(m, coach) || (m.is_new_development === true && isRecent(m));
+// Fixed floor (not a rolling window): moves that happened before this date are pre-tracking history.
+// Change it with the BTG_CAROUSEL_SINCE env var (YYYY-MM-DD). Article publish dates are never limited.
+const SINCE = () => process.env.BTG_CAROUSEL_SINCE || "2026-09-01";
+export const keepMove = (m, coach) =>
+  (m.move_type === "Passed Away" || !m.effective_date || m.effective_date >= SINCE()) &&
+  (!alreadyInTracker(m, coach) || (m.is_new_development === true && isRecent(m)));
 
 function newId(m) {
   const base = [m.row, m.move_type, t(m.to_team), t(m.from_team), m.effective_date].join("|");
