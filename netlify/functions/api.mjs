@@ -1,7 +1,9 @@
 import { getRoster, getMoves, setMoves, getMeta, setMeta, setJSON } from "../lib/store.mjs";
-import { cleanMoves } from "../lib/scan.mjs";
+import { cleanMoves, makeTeamCheck, tombstoneOf, firstReported } from "../lib/scan.mjs";
+import { getJSON as getBlob } from "../lib/store.mjs";
 
-const SCHEMA = 3;
+const SCHEMA = 4;
+async function teamCheck() { try { return makeTeamCheck((await getTeams()).teams); } catch { return () => false; } }
 import { getTeams } from "../lib/teams.mjs";
 import { MOVE_TYPES } from "../lib/claude.mjs";
 import { SCOOP_PAGES, RSS_FEEDS } from "../lib/sources.mjs";
@@ -17,7 +19,7 @@ export default async (req, context) => {
       let [moves, meta, roster] = await Promise.all([getMoves(), getMeta(), getRoster()]);
       // One-time cleanup when the matching rules change: merge duplicates, drop Candidate cards and old news.
       if ((meta.schema || 1) < SCHEMA && !meta.scanning) {
-        moves = cleanMoves(moves, roster.coaches);
+        moves = cleanMoves(moves, roster.coaches, await getBlob("deleted", []), await teamCheck());
         await setMoves(moves);
         meta = { ...(await getMeta()), schema: SCHEMA };
         await setMeta(meta);
@@ -31,6 +33,14 @@ export default async (req, context) => {
     }
 
     if (path === "teams" && method === "GET") return json(await getTeams());
+
+    // Compact view of every card (for audits): one line per move, no source lists.
+    if (path === "digest" && method === "GET") {
+      const [moves, meta, del] = await Promise.all([getMoves(), getMeta(), getBlob("deleted", [])]);
+      const lines = moves.map((m) => [m.first_reported, m.row, m.coach_name, m.move_type, m.certainty, `${m.from_team || "?"} (${m.from_title || ""}) -> ${m.to_team || "-"} (${m.to_title || ""})`, m.status, `${m.source_count || (m.sources || []).length} src`, (m.sources || [])[0]?.title || ""].join(" | "));
+      const runs = (meta.runs || []).slice(0, 5).map((r) => ({ startedAt: r.startedAt, trigger: r.trigger, chain: r.chain, collected: r.collected, relevant: r.relevant, claudeCalls: r.claudeCalls, verifyCalls: r.verifyCalls, newMoves: r.newMoves, updatedMoves: r.updatedMoves, remaining: r.remaining, skips: r.skips, rejected: r.rejected, errors: r.errors }));
+      return new Response([`schema ${meta.schema} · rechecked ${meta.rechecked || 0} · scanning ${!!meta.scanning} · ${moves.length} cards · ${del.length} deleted`, ...lines, "", JSON.stringify(runs, null, 1)].join("\n"), { headers: { "content-type": "text/plain", "cache-control": "no-store" } });
+    }
 
     if (path === "roster" && method === "POST") {
       const body = await req.json();
@@ -61,13 +71,14 @@ export default async (req, context) => {
       const now = new Date().toISOString();
       const m = {
         id: "x" + Date.now().toString(36), row: b.row ? Number(b.row) : null, coach_name: b.coach_name, move_type: b.move_type,
-        certainty: b.certainty || "reported", from_team: b.from_team || null, from_title: b.from_title || null,
+        certainty: b.certainty === "official" ? "official" : "reported", from_team: b.from_team || null, from_title: b.from_title || null,
         to_team: b.to_team || null, to_title: b.to_title || null, effective_date: b.effective_date || now.slice(0, 10),
         summary: b.summary || "", match_confidence: "high", match_reason: "Logged manually",
         status: "confirmed", origin: "manual",
         sources: b.source_url ? [{ url: b.source_url, title: b.source_title || b.source_url, source: b.source_name || "Manual entry", date: b.effective_date || null }] : [],
         found_at: now, updated_at: now,
       };
+      m.first_reported = (b.effective_date || now).slice(0, 10);
       moves.push(m);
       await setMoves(moves);
       return json({ ok: true, move: m });
@@ -78,11 +89,18 @@ export default async (req, context) => {
       const moves = await getMoves();
       const i = moves.findIndex((x) => x.id === mm[1]);
       if (i < 0) return json({ error: "Move not found" }, 404);
-      if (method === "DELETE") moves.splice(i, 1);
+      if (method === "DELETE") {
+        // Remember what was deleted so later scans never recreate it.
+        const del = await getBlob("deleted", []);
+        del.push(tombstoneOf(moves[i]));
+        await setJSON("deleted", del.slice(-2000));
+        moves.splice(i, 1);
+      }
       else {
         const b = await req.json();
         const editable = ["status", "row", "coach_name", "move_type", "certainty", "from_team", "from_title", "to_team", "to_title", "effective_date", "summary", "note"];
         for (const k of editable) if (k in b) moves[i][k] = k === "row" && b[k] !== null ? Number(b[k]) : b[k];
+        if ("effective_date" in b && moves[i].origin === "manual") moves[i].first_reported = String(b.effective_date).slice(0, 10);
         moves[i].updated_at = new Date().toISOString();
       }
       await setMoves(moves);

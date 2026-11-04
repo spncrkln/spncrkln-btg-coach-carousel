@@ -125,7 +125,7 @@ function filtered() {
   const [key, dir] = S.sort.split("-");
   const sgn = dir === "asc" ? 1 : -1;
   const val = {
-    date: (m) => m.effective_date || m.found_at || "", name: (m) => (m.coach_name || "").split(" ").slice(-1)[0] + " " + m.coach_name,
+    date: (m) => dateOf(m), name: (m) => (m.coach_name || "").split(" ").slice(-1)[0] + " " + m.coach_name,
     row: (m) => m.row ?? 1e9, from: (m) => m.from_team || "~", to: (m) => m.to_team || "~", type: (m) => m.move_type,
     title: (m) => m.to_title || m.from_title || "~",
   }[key];
@@ -138,6 +138,8 @@ function filtered() {
 }
 
 /* ---------- render ---------- */
+const dateOf = (m) => m.first_reported || (m.sources || []).map((x) => x.date).filter(Boolean).sort()[0] || m.effective_date || String(m.found_at || "").slice(0, 10);
+const fmtShort = (d) => { const x = new Date(String(d).slice(0, 10) + "T12:00:00"); return isNaN(x) ? "" : x.toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
 const fmtDate = (d) => { if (!d) return ""; const x = new Date(d.length === 10 ? d + "T12:00:00" : d); return x.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); };
 const fmtTime = (d) => new Date(d).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 function nextScheduled() { const d = new Date(); d.setUTCMinutes(0, 0, 0); d.setUTCHours(Math.floor(d.getUTCHours() / 4) * 4 + 4); return d; }
@@ -179,9 +181,9 @@ function renderChips() {
   $("#typeChips").querySelectorAll(".chip").forEach((el) => el.onclick = () => { const t = el.dataset.t; S.typeOn.has(t) ? S.typeOn.delete(t) : S.typeOn.add(t); render(); });
 }
 const ARROW = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></svg>`;
-const srcA = (s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener"><em>${esc(s.source || "Source")}</em><span>${esc(s.title || s.url)}</span></a>`;
+const srcA = (s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener"><em>${esc(s.source || "Source")}${s.date ? ` · ${esc(fmtShort(s.date))}` : ""}</em><span>${esc(s.title || s.url)}</span></a>`;
 function srcLinks(m) {
-  const all = m.sources || [];
+  const all = [...(m.sources || [])].sort((a, b) => String(a.date || "9").localeCompare(String(b.date || "9")));
   if (!all.length) return `<span class="ttl">No source link</span>`;
   const shown = all.slice(0, 2).map(srcA).join("");
   const total = Math.max(m.source_count || 0, all.length);
@@ -197,7 +199,7 @@ function card(m) {
     <div class="head">
       <div><button class="coach" data-row="${m.row ?? ""}" data-name="${esc(m.coach_name)}">${esc(m.coach_name)}</button>
         <div class="rowtag">${m.row ? `Tracker <b>row ${m.row}</b>` : "Not linked to a row"}${tracker?.current ? ` · listed at ${esc(tracker.current)}` : ""}</div></div>
-      <div class="badges"><span class="type">${esc(m.move_type)}</span><span class="cert ${esc(m.certainty)}">${esc(m.certainty)}</span></div>
+      <div class="badges"><span class="type">${esc(m.move_type)}</span><span class="cert ${esc(m.certainty)}">${esc(m.certainty === "official" ? "official" : "reported")}</span></div>
     </div>
     <div class="flow">
       <div class="side">${logo(m.from_team)}<div class="team">${esc(m.from_team || "Unknown")}</div><div class="ttl">${esc(m.from_title || "")}</div></div>
@@ -207,7 +209,7 @@ function card(m) {
     ${m.summary ? `<div class="summary">${esc(m.summary)}</div>` : ""}
     ${m.origin === "scan" ? `<div class="match"><span class="lvl ${esc(m.match_confidence)}">${esc(m.match_confidence)} match</span> · ${esc(m.match_reason)}</div>` : ""}
     <div class="srcs">${srcLinks(m)}</div>
-    <div class="foot"><span>${fmtDate(m.effective_date)}${m.status === "confirmed" ? " · ✓ Confirmed" : m.status === "new" ? " · Needs review" : " · Dismissed"}</span>
+    <div class="foot"><span title="Date of the earliest article that reported this move">First reported ${fmtDate(dateOf(m))}${m.status === "confirmed" ? " · ✓ Confirmed" : m.status === "new" ? " · Needs review" : " · Dismissed"}</span>
       <span class="btns">${m.status !== "confirmed" ? `<button class="btn small" data-act="confirmed" data-id="${m.id}">Confirm</button>` : ""}
       ${m.status !== "dismissed" ? `<button class="btn small" data-act="dismissed" data-id="${m.id}" title="Wrong person or not a real move">Dismiss</button>` : `<button class="btn small" data-act="new" data-id="${m.id}">Restore</button>`}
       <button class="btn small" data-act="delete" data-id="${m.id}" title="Delete">✕</button></span></div>
@@ -222,7 +224,7 @@ function table(list) {
     <td><a href="#" class="coachlink" data-row="${m.row ?? ""}" data-name="${esc(m.coach_name)}"><b>${esc(m.coach_name)}</b></a></td>
     <td>${m.row ?? "—"}</td><td><span class="pill">${esc(m.move_type)}</span><br><small>${esc(m.certainty)}</small></td>
     <td>${mini(m.from_team)}<small>${esc(m.from_title || "")}</small></td><td>${mini(m.to_team)}</td>
-    <td>${esc(m.to_title || "")}</td><td>${fmtDate(m.effective_date)}</td>
+    <td>${esc(m.to_title || "")}</td><td>${fmtDate(dateOf(m))}</td>
     <td>${(m.sources || []).map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.source || "link")}</a>`).join("<br>")}</td>
     <td>${m.status === "new" ? `<button class="btn small" data-act="confirmed" data-id="${m.id}">Confirm</button>` : esc(m.status)}</td></tr>`).join("")}
   </tbody></table></div>`;
@@ -249,6 +251,9 @@ function renderLog() {
     <p>Scans run automatically about every 4 hours. There's no cap on how many articles Claude reads: if one run can't finish within Netlify's 15-minute limit, it saves its progress and starts a follow-up run. Each one reads FootballScoop's homepage and Jobs Scoop pages, ESPN's college and NFL feeds, and Google News searches covering 247Sports, On3, school press releases, NFL and CFL staff news. Only articles that mention a coach from your tracker by name are sent to Claude.</p>
     <ul>${[...srcs.footballscoop.map((u) => "FootballScoop · " + u.replace("https://www.footballscoop.com", "")), ...srcs.feeds].map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
     ${runs[0]?.nameSearch ? `<p>${esc(runs[0].nameSearch)}. Every coach in the tracker is also searched by name on a rotating basis, so a full pass of all ${S.roster.count?.toLocaleString() || ""} names takes about three scans.${runs[0].skippedOld ? ` Last scan skipped ${runs[0].skippedOld} move(s) your tracker already reflects.` : ""}</p>` : ""}
+    ${runs[0]?.rejected?.length || runs[0]?.skips ? `<details><summary>What the last scan filtered out</summary>
+      ${runs[0].skips ? `<ul>${Object.entries(runs[0].skips).map(([k, v]) => `<li>${v} × ${esc(k)}</li>`).join("")}</ul>` : ""}
+      ${runs[0].rejected?.length ? `<p><b>Rejected by the fact-check pass:</b></p><ul>${runs[0].rejected.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}</details>` : ""}
     ${runs.length ? `<table><thead><tr><th>Started</th><th>Trigger</th><th>Headlines</th><th>New</th><th>Coaching</th><th>Tracker names</th><th>Claude reads</th><th>New moves</th><th>Carried to next run</th><th>Issues</th></tr></thead><tbody>
     ${runs.map((r) => `<tr><td>${fmtTime(r.startedAt)}</td><td>${esc(r.trigger)}${r.chain ? ` (part ${r.chain + 1})` : ""}</td><td>${r.collected}</td><td>${r.newItems}</td><td>${r.relevant}</td><td>${r.withCandidates}</td><td>${r.claudeCalls}</td><td>${r.newMoves}</td><td>${r.remaining ?? 0}</td>
     <td>${r.errors?.length ? `<details><summary>${r.errors.length}</summary>${r.errors.map((e) => `<div>${esc(e)}</div>`).join("")}</details>` : "—"}</td></tr>`).join("")}</tbody></table>` : "<p>No scans have run yet.</p>"}`;
@@ -258,14 +263,14 @@ function renderLog() {
 function openCoach(row, name) {
   const c = row ? S.byRow.get(Number(row)) : null;
   const moves = S.moves.filter((m) => (row && m.row === Number(row)) || (!row && m.coach_name === name))
-    .sort((a, b) => String(b.effective_date).localeCompare(String(a.effective_date)));
+    .sort((a, b) => String(dateOf(b)).localeCompare(String(dateOf(a))));
   const kv = c ? [["Tracker row", c.row], ["Listed current team", c.current || "None"], ["Most recent title", c.title], ["Colleges coached", c.colleges], ["NFL teams", c.nflTeams], ["Years coaching", c.years], ["Alma mater", c.alma]]
     .filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") : "<dt>Tracker</dt><dd>Not linked to a row</dd>";
   $("#coachBody").innerHTML = `<button class="close" onclick="this.closest('dialog').close()">×</button>
     <h2>${esc(c ? `${c.first} ${c.last}` : name)}</h2><dl class="kv">${kv}</dl>
     <h3>Moves logged (${moves.length})</h3>
     <div class="timeline">${moves.map((m) => `<div style="--c:${cvar(m.move_type)}"><b>${esc(m.move_type)}</b> · ${esc(m.from_team || "?")} → ${esc(m.to_team || "—")}${m.to_title ? `, ${esc(m.to_title)}` : ""}
-      <small>${fmtDate(m.effective_date)} · ${esc(m.certainty)} · ${(m.sources || []).map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.source)}</a>`).join(", ")}</small></div>`).join("") || "<div>None yet.</div>"}</div>`;
+      <small>First reported ${fmtDate(dateOf(m))} · ${esc(m.certainty)} · ${(m.sources || []).map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.source)}</a>`).join(", ")}</small></div>`).join("") || "<div>None yet.</div>"}</div>`;
   $("#coachDlg").showModal();
 }
 $("#coachDlg").addEventListener("click", (e) => { if (e.target.id === "coachDlg") e.target.close(); });

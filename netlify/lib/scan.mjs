@@ -1,6 +1,7 @@
 import { SCOOP_PAGES, RSS_FEEDS, MOVE_WORDS, NAMES_PER_QUERY, NAME_QUERIES_PER_SCAN, nameQuery } from "./sources.mjs";
 import { buildNameIndex, findCandidates, norm } from "./names.mjs";
-import { extractMoves } from "./claude.mjs";
+import { extractMoves, verifyMove, recheckCard } from "./claude.mjs";
+import { getTeams } from "./teams.mjs";
 import { getRoster, getMoves, setMoves, getMeta, setMeta, getJSON, setJSON } from "./store.mjs";
 
 const UA = "Mozilla/5.0 (compatible; BTGCoachCarousel/1.0)";
@@ -128,35 +129,49 @@ export async function collect(log, roster, meta) {
 const CAT = { Hired: "arrive", Promoted: "arrive", "Title Change": "arrive", Interim: "arrive",
   Fired: "exit", Resigned: "exit", Retired: "exit", Departed: "exit", "Passed Away": "death" };
 const PREC = { Interim: 4, Promoted: 3, Hired: 2, "Title Change": 1, Fired: 4, Retired: 3, Resigned: 2, Departed: 1, "Passed Away": 1 };
-const CERT_RANK = { rumored: 0, reported: 1, official: 2 };
+const CERT_RANK = { reported: 1, official: 2 };
 const CONF_RANK = { low: 0, medium: 1, high: 2 };
 const MAX_SOURCES = 40;
 const t = (x) => norm(x || "").trim();
 const sameTeam = (a, b) => { const x = t(a), y = t(b); return !x || !y || x === y || (` ${x} `).includes(` ${y} `) || (` ${y} `).includes(` ${x} `); };
 const strictSame = (a, b) => !!t(a) && !!t(b) && sameTeam(a, b);
 const days = (a, b) => Math.abs(Date.parse(a || 0) - Date.parse(b || 0)) / 864e5;
+const d10 = (x) => (x ? String(x).slice(0, 10) : null);
 
-function sameEvent(a, b) {
-  if (a.id === b.id) return true;
-  const who = a.row && b.row ? a.row === b.row : t(a.coach_name) === t(b.coach_name);
-  if (!who || CAT[a.move_type] !== CAT[b.move_type]) return false;
+// The card's date: the earliest article that reported it as news. Fixed once set, so cards don't jump around.
+export function firstReported(m) {
+  const src = m.sources || [];
+  const news = src.filter((s) => s.news !== false && s.date).map((s) => d10(s.date)).sort();
+  const any = src.filter((s) => s.date).map((s) => d10(s.date)).sort();
+  return news[0] || any[0] || d10(m.effective_date) || d10(m.found_at);
+}
+
+function sameWho(a, b) { return (a.row && b.row) ? a.row === b.row : t(a.coach_name) === t(b.coach_name); }
+export function sameEvent(a, b) {
+  if (a.id && a.id === b.id) return true;
+  if (!sameWho(a, b) || CAT[a.move_type] !== CAT[b.move_type]) return false;
   const c = CAT[a.move_type];
   if (c === "death") return true;
-  if (days(a.effective_date, b.effective_date) > 120) return false;
-  return c === "arrive" ? sameTeam(a.to_team, b.to_team) : sameTeam(a.from_team, b.from_team);
+  const gap = days(a.first_reported || firstReported(a), b.first_reported || firstReported(b));
+  if (c === "exit") return gap <= 14 || (sameTeam(a.from_team, b.from_team) && gap <= 120);
+  return sameTeam(a.to_team, b.to_team) && gap <= 120;
 }
 
 function absorb(ex, m) {
   if ((PREC[m.move_type] || 0) > (PREC[ex.move_type] || 0)) ex.move_type = m.move_type;
-  for (const s of m.sources || []) if (!ex.sources.some((x) => x.url === s.url)) { ex.sources.push(s); ex.source_count = (ex.source_count || ex.sources.length - 1) + 1; }
-  ex.source_count = Math.max(ex.source_count || 0, ex.sources.length, (m.source_count || 0));
+  const before = ex.sources.length;
+  for (const s of m.sources || []) if (!ex.sources.some((x) => x.url === s.url)) ex.sources.push(s);
+  ex.source_count = Math.max(ex.source_count || before, before) + (ex.sources.length - before);
+  ex.sources.sort((a, b) => String(a.date || "9").localeCompare(String(b.date || "9")));
   if (ex.sources.length > MAX_SOURCES) ex.sources = ex.sources.slice(0, MAX_SOURCES);
   if ((CERT_RANK[m.certainty] ?? 1) > (CERT_RANK[ex.certainty] ?? 1)) ex.certainty = m.certainty;
   if ((CONF_RANK[m.match_confidence] ?? 1) > (CONF_RANK[ex.match_confidence] ?? 1)) { ex.match_confidence = m.match_confidence; ex.match_reason = m.match_reason; }
   for (const k of ["from_team", "from_title", "to_team", "to_title", "summary", "row"]) if (!ex[k] && m[k]) ex[k] = m[k];
   if (m.is_new_development) ex.is_new_development = true;
-  if (m.effective_date && (!ex.effective_date || m.effective_date < ex.effective_date)) ex.effective_date = m.effective_date;
+  if (!ex.effective_date && m.effective_date) ex.effective_date = m.effective_date;
   if (ex.status !== "dismissed" && m.status === "confirmed") ex.status = "confirmed";
+  const fr = firstReported(ex);
+  if (!ex.first_reported || (fr && fr < ex.first_reported)) ex.first_reported = fr;
   ex.updated_at = new Date().toISOString();
 }
 
@@ -166,13 +181,12 @@ export function alreadyInTracker(m, coach) {
   const c = CAT[m.move_type];
   if (c === "death" || m.move_type === "Interim") return false;
   if (c === "arrive") {
-    if (m.move_type === "Hired") return strictSame(m.to_team, coach.current) || (strictSame(m.from_team, m.to_team) && strictSame(m.to_team, coach.current));
+    if (m.move_type === "Hired") return strictSame(m.to_team, coach.current);
     return strictSame(m.to_team, coach.current) && (!t(m.to_title) || t(m.to_title) === t(coach.title));
   }
-  // exit: tracker already has them out of coaching, or already somewhere else
   return !t(coach.current) || (!!t(m.from_team) && !sameTeam(m.from_team, coach.current));
 }
-const isRecent = (m) => Date.now() - Date.parse(m.effective_date || 0) < 30 * 864e5;
+const isRecent = (m) => Date.now() - Date.parse(m.first_reported || m.effective_date || 0) < 30 * 864e5;
 // Fixed floor (not a rolling window): moves that happened before this date are pre-tracking history.
 // Change it with the BTG_CAROUSEL_SINCE env var (YYYY-MM-DD). Article publish dates are never limited.
 const SINCE = () => process.env.BTG_CAROUSEL_SINCE || "2026-09-01";
@@ -180,50 +194,128 @@ export const keepMove = (m, coach) =>
   (m.move_type === "Passed Away" || !m.effective_date || m.effective_date >= SINCE()) &&
   (!alreadyInTracker(m, coach) || (m.is_new_development === true && isRecent(m)));
 
-function newId(m) {
-  const base = [m.row, m.move_type, t(m.to_team), t(m.from_team), m.effective_date].join("|");
-  let h = 0; for (let i = 0; i < base.length; i++) h = (h * 31 + base.charCodeAt(i)) | 0;
-  return "m" + (h >>> 0).toString(36);
+// Generic "destinations" like "new coordinator" or "another program" are not teams.
+const GENERIC = new RegExp("\\b(" + [
+  "new (head )?(coordinator|coach|job|role|position|staff|program|team|school|gig|home|destination)s?",
+  "(offensive|defensive|special teams) coordinators?", "coordinators", "hires", "hiring", "rankings?", "ranked",
+  "top \\d+", "best", "various", "unknown", "tbd", "to be determined", "undisclosed", "unnamed", "another (school|program|team|job)",
+  "elsewhere", "n a", "none", "unspecified", "multiple", "several", "opening", "vacancy", "landing spot",
+  "(college|nfl|cfl|power (4|four|5|five)|sec|big ten|acc|big 12) (team|program|school|job)s?",
+].join("|") + ")\\b");
+export function makeTeamCheck(teams) {
+  const known = new Set();
+  for (const tm of teams || []) for (const n of tm.names || []) known.add(t(n));
+  return (name) => known.has(t(name));
+}
+export function genericTeam(name, isKnown = () => false) {
+  const x = t(name);
+  if (!x) return false;
+  if (isKnown(name)) return false;
+  return GENERIC.test(x) || x.length < 3;
 }
 
-// Returns "new", "merged" or "skipped".
-export function mergeMove(moves, raw, coach, article, now) {
+function newId(m) {
+  const base = [m.row, m.move_type, t(m.to_team), t(m.from_team), m.first_reported, Math.random()].join("|");
+  let h = 0; for (let i = 0; i < base.length; i++) h = (h * 31 + base.charCodeAt(i)) | 0;
+  return "m" + (h >>> 0).toString(36) + Date.now().toString(36).slice(-4);
+}
+
+export function buildMove(raw, coach, article, now) {
   const m = {
     row: coach.row, coach_name: `${coach.first} ${coach.last}`.trim(),
-    move_type: raw.move_type, certainty: raw.certainty || "reported",
+    move_type: raw.move_type, certainty: raw.certainty === "official" ? "official" : raw.certainty === "rumored" ? "rumored" : "reported",
     from_team: raw.from_team || (CAT[raw.move_type] !== "arrive" || raw.move_type === "Hired" ? coach.current || null : null),
     from_title: raw.from_title || null, to_team: raw.to_team || null, to_title: raw.to_title || null,
     effective_date: raw.effective_date || article.date || now.slice(0, 10),
-    is_new_development: raw.is_new_development === true,
+    is_new_development: raw.is_new_development === true, same_as: raw.same_as || null,
     summary: raw.summary || "", match_confidence: raw.match_confidence || "medium", match_reason: raw.match_reason || "",
     status: "new", origin: "scan", found_at: now, updated_at: now,
-    sources: [{ url: article.url, title: article.title, source: article.source, date: article.date }], source_count: 1,
+    sources: [{ url: article.url, title: article.title, source: article.source, date: d10(article.date) || now.slice(0, 10), news: raw.is_new_development === true }],
+    source_count: 1,
   };
   if (["Promoted", "Title Change", "Interim"].includes(m.move_type) && !m.to_team) m.to_team = m.from_team || coach.current || null;
   if (m.move_type === "Hired" && strictSame(m.from_team, m.to_team)) m.move_type = "Title Change";
   if (CAT[m.move_type] === "death") m.to_team = null;
+  m.first_reported = firstReported(m);
   m.id = newId(m);
-  const ex = moves.find((x) => sameEvent(x, m));
-  if (ex) { absorb(ex, m); return "merged"; }
-  if (!keepMove(m, coach)) return "skipped";
-  moves.push(m);
-  return "new";
+  return m;
 }
 
-// Cleans the whole saved list: drops retired move types, merges duplicates, removes old news.
-export function cleanMoves(moves, roster) {
-  const byRow = new Map(roster.map((c) => [c.row, c]));
-  const sorted = [...moves].filter((m) => CAT[m.move_type]).sort((a, b) => String(a.found_at).localeCompare(String(b.found_at)));
+// Where does this move go? {kind:"merge", target} | {kind:"new"} | {kind:"skip", why}
+export function classify(moves, m, coach, ctx) {
+  if (raw_rumor(m)) return { kind: "skip", why: "rumor" };
+  if (m.same_as) { const tgt = moves.find((x) => x.id === m.same_as && sameWho(x, m)); if (tgt) return { kind: "merge", target: tgt }; }
+  const tgt = moves.find((x) => sameEvent(x, m));
+  if (tgt) return m.is_new_development ? { kind: "merge", target: tgt } : { kind: "skip", why: "background mention of a logged move" };
+  if ((ctx.tombs || []).some((x) => sameEvent(x, m))) return { kind: "skip", why: "you deleted this move" };
+  if (!m.is_new_development) return { kind: "skip", why: "background mention" };
+  if (CAT[m.move_type] === "arrive" && (m.move_type === "Hired" ? !t(m.to_team) : false)) return { kind: "skip", why: "no destination" };
+  if (genericTeam(m.to_team, ctx.isKnown)) return { kind: "skip", why: `generic destination "${m.to_team}"` };
+  if (!keepMove(m, coach)) return { kind: "skip", why: "already in tracker / before tracking start" };
+  return { kind: "new" };
+}
+const raw_rumor = (m) => m.certainty === "rumored";
+
+// Commits a batch of found moves onto the LATEST saved list (never a stale copy), honoring deletions.
+export function applyFound(latest, found, tombs, isKnown, roster) {
+  for (const f of found) {
+    const m = f.move;
+    const tgt = (f.targetId && latest.find((x) => x.id === f.targetId)) || latest.find((x) => sameEvent(x, m));
+    if (tgt) { absorb(tgt, m); continue; }
+    if ((tombs || []).some((x) => sameEvent(x, m))) continue;
+    latest.push(m);
+  }
+  return cleanMoves(latest, roster, tombs, isKnown);
+}
+
+// Cleans the whole saved list: drops retired types/rumors/generic destinations, fixes dates, merges duplicates.
+export function cleanMoves(moves, roster, tombs = [], isKnown = () => false) {
+  const byRow = new Map((roster || []).map((c) => [c.row, c]));
+  const list = moves.filter((m) => CAT[m.move_type] && m.certainty !== "rumored")
+    .map((m) => {
+      const mm = { ...m, sources: [...(m.sources || [])].sort((a, b) => String(a.date || "9").localeCompare(String(b.date || "9"))) };
+      if (mm.move_type === "Hired" && strictSame(mm.from_team, mm.to_team)) mm.move_type = "Title Change";
+      mm.first_reported = mm.first_reported && mm.origin === "manual" ? mm.first_reported : firstReported(mm);
+      return mm;
+    })
+    .sort((a, b) => String(a.first_reported).localeCompare(String(b.first_reported)) || String(a.found_at).localeCompare(String(b.found_at)));
   const out = [];
-  for (const m of sorted) {
-    const mm = { ...m, sources: [...(m.sources || [])] };
-    if (mm.move_type === "Hired" && strictSame(mm.from_team, mm.to_team)) mm.move_type = "Title Change";
+  for (const mm of list) {
     const ex = out.find((x) => sameEvent(x, mm));
-    if (ex) { absorb(ex, mm); continue; }
-    if (mm.origin === "scan" && !keepMove(mm, byRow.get(mm.row))) continue;
+    if (ex) {
+      // keep the user's decision if either copy was confirmed/dismissed
+      if (mm.status === "dismissed") ex.status = "dismissed";
+      absorb(ex, mm); continue;
+    }
+    if (mm.origin === "scan") {
+      if ((tombs || []).some((x) => sameEvent(x, mm))) continue;
+      if (genericTeam(mm.to_team, isKnown)) continue;
+      if (!keepMove(mm, byRow.get(mm.row))) continue;
+    }
     out.push(mm);
   }
-  return out;
+  return out.sort((a, b) => String(b.first_reported).localeCompare(String(a.first_reported)) || String(b.found_at).localeCompare(String(a.found_at)));
+}
+
+export const tombstoneOf = (m) => ({ id: m.id, row: m.row, coach_name: m.coach_name, move_type: m.move_type, from_team: m.from_team, to_team: m.to_team, first_reported: m.first_reported || firstReported(m), deleted_at: new Date().toISOString() });
+
+// One-time re-check of cards made under older, looser rules (unconfirmed scan cards only).
+async function recheckOld(log) {
+  const meta = await getMeta();
+  if ((meta.rechecked || 0) >= 4) return;
+  const roster = (await getRoster()).coaches;
+  const byRow = new Map(roster.map((c) => [c.row, c]));
+  const moves = await getMoves();
+  const drop = new Set();
+  for (const m of moves.filter((x) => x.origin === "scan" && x.status === "new")) {
+    try {
+      const v = await recheckCard(m, byRow.get(m.row));
+      if (v.verdict === "reject") { drop.add(m.id); log.rejected.push(`${m.coach_name} (${m.move_type}): ${v.reason}`); }
+    } catch (e) { log.errors.push(`Recheck ${m.coach_name}: ${e.message}`); }
+  }
+  const latest = await getMoves();
+  await setMoves(latest.filter((x) => !drop.has(x.id)));
+  await setMeta({ ...(await getMeta()), rechecked: 4 });
 }
 
 // Full scan: gather headlines, keep coaching-related ones, find roster names, ask Claude, save moves.
@@ -237,10 +329,13 @@ export async function runScan(trigger = "manual", opts = {}) {
   meta.scanning = { startedAt, trigger, chain, stage: chain ? `Continuing (part ${chain + 1})` : "Collecting headlines" };
   await setMeta(meta);
 
-  const log = { startedAt, trigger, chain, sources: {}, errors: [], collected: 0, newItems: 0, relevant: 0, withCandidates: 0, claudeCalls: 0, newMoves: 0, updatedMoves: 0, remaining: 0 };
+  const log = { startedAt, trigger, chain, sources: {}, errors: [], rejected: [], skips: {}, collected: 0, newItems: 0, relevant: 0, withCandidates: 0, claudeCalls: 0, verifyCalls: 0, newMoves: 0, updatedMoves: 0, remaining: 0 };
   try {
+    await recheckOld(log);
     const roster = (await getRoster()).coaches;
     const idx = buildNameIndex(roster);
+    let isKnown = () => false;
+    try { isKnown = makeTeamCheck((await getTeams()).teams); } catch (e) { log.errors.push("Team list: " + e.message); }
     const seen = await getJSON("seen", {});
     // Leftovers from an earlier run that ran out of time are read first, then fresh headlines.
     const backlog = await getJSON("backlog", []);
@@ -255,10 +350,21 @@ export async function runScan(trigger = "manual", opts = {}) {
     log.relevant = relevant.length;
 
     meta.scanning.stage = `Reading ${relevant.length} articles`; await setMeta(meta);
-    let moves = await getMoves();
+    // Working view = latest saved cards + cards found this run. Saves always re-read the latest list first,
+    // so deletes/confirms made while a scan runs are never overwritten.
+    let snapshot = await getMoves();
+    let tombs = await getJSON("deleted", []);
+    let pending = [];
     const now = new Date().toISOString();
     let saving = Promise.resolve();
-    const checkpoint = () => (saving = saving.then(() => Promise.all([setMoves(moves), setJSON("seen", seen)])).catch((e) => log.errors.push("Save: " + e.message)));
+    const checkpoint = () => (saving = saving.then(async () => {
+      const batch = pending; pending = [];
+      tombs = await getJSON("deleted", []);
+      const latest = applyFound(await getMoves(), batch, tombs, isKnown, roster);
+      await Promise.all([setMoves(latest), setJSON("seen", seen)]);
+      snapshot = [...latest, ...pending.map((p) => p.move)];
+    }).catch((e) => log.errors.push("Save: " + e.message)));
+    const skip = (why) => { log.skips[why] = (log.skips[why] || 0) + 1; };
 
     let i = 0, stopped = false;
     const worker = async () => {
@@ -274,12 +380,24 @@ export async function runScan(trigger = "manual", opts = {}) {
           if (!cands.length) { seen[it.key] = now; continue; }
           log.withCandidates++;
           log.claudeCalls++;
-          const found = await extractMoves(it, cands);
+          const loggedFor = (row) => snapshot.filter((x) => x.row === row && x.status !== "dismissed").slice(0, 8);
+          const found = await extractMoves(it, cands, loggedFor);
           for (const raw of found) {
             const coach = cands.find((c) => c.row === Number(raw.row));
             if (!coach) continue;
-            const r = mergeMove(moves, raw, coach, it, now);
-            if (r === "new") log.newMoves++; else if (r === "merged") log.updatedMoves++; else log.skippedOld = (log.skippedOld || 0) + 1;
+            let m = buildMove(raw, coach, it, now);
+            let c = classify(snapshot, m, coach, { tombs, isKnown });
+            if (c.kind === "new") {
+              log.verifyCalls++;
+              const v = await verifyMove(it, m, coach);
+              if (v.verdict !== "accept") { log.rejected.push(`${m.coach_name} (${m.move_type} ${m.from_team || "?"} → ${m.to_team || "-"}): ${v.reason}`); skip("rejected by fact-check"); continue; }
+              m = buildMove({ ...raw, ...Object.fromEntries(Object.entries(v).filter(([k, val]) => ["move_type", "from_team", "from_title", "to_team", "to_title", "certainty"].includes(k) && val !== undefined)) }, coach, it, now);
+              c = classify(snapshot, m, coach, { tombs, isKnown });
+              if (c.kind === "skip") { skip(c.why); continue; }
+            }
+            if (c.kind === "skip") { skip(c.why); continue; }
+            if (c.kind === "merge") { pending.push({ move: m, targetId: c.target.id }); absorb(c.target, m); log.updatedMoves++; }
+            else { pending.push({ move: m }); snapshot.push(m); log.newMoves++; }
           }
           seen[it.key] = now;
           if (log.claudeCalls % SAVE_EVERY === 0) checkpoint();
@@ -290,22 +408,23 @@ export async function runScan(trigger = "manual", opts = {}) {
       }
     };
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    checkpoint();
     await saving;
 
     // Irrelevant headlines are marked seen; unread relevant ones become the backlog for the next run.
     for (const it of fresh) if (!relevant.includes(it)) seen[it.key] = now;
     const left = relevant.filter((it) => !seen[it.key]).slice(0, 2000)
-      .map(({ url, title, source, date, text, needsBody, key }) => ({ url, title, source, date, text: (text || "").slice(0, 30000), needsBody, key }));
+      .map(({ url, title, source, date, text, needsBody, key, agg }) => ({ url, title, source, date, text: (text || "").slice(0, 30000), needsBody, key, agg }));
     log.remaining = left.length;
     const cutoff = Date.now() - 60 * 864e5;
     for (const k of Object.keys(seen)) if (Date.parse(seen[k]) < cutoff) delete seen[k];
-    moves = cleanMoves(moves, roster);
-    await Promise.all([setJSON("seen", seen), setMoves(moves), setJSON("backlog", left)]);
+    await Promise.all([setJSON("seen", seen), setJSON("backlog", left)]);
   } catch (e) {
     log.errors.push(e.message);
   }
   log.finishedAt = new Date().toISOString();
   log.errors = log.errors.slice(0, 40);
+  log.rejected = log.rejected.slice(0, 60);
   const m2 = await getMeta();
   delete m2.scanning;
   if (meta.nameCursor !== undefined) m2.nameCursor = meta.nameCursor;

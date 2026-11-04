@@ -40,7 +40,7 @@
     <select id="level"><option value="">All levels</option><option value="NFL">NFL</option><option value="FBS">FBS</option><option value="FCS">FCS</option><option value="Other">Other college / CFL / HS</option></select>
     <select id="status"><option value="active">New + Confirmed</option><option value="new">Needs review</option><option value="confirmed">Confirmed</option><option value="dismissed">Dismissed</option><option value="">Everything</option></select>
     <select id="sort">
-      <option value="date-desc">Newest first</option><option value="date-asc">Oldest first</option>
+      <option value="date-desc">Newest first (by first report)</option><option value="date-asc">Oldest first (by first report)</option>
       <option value="name-asc">Coach A–Z</option><option value="row-asc">Spreadsheet row</option>
       <option value="from-asc">From school A–Z</option><option value="to-asc">To school A–Z</option>
       <option value="type-asc">Move type</option><option value="title-asc">New title A–Z</option>
@@ -78,7 +78,7 @@
     </div>
     <div class="two">
       <label>Date<input name="effective_date" type="date"></label>
-      <label>Certainty<select name="certainty"><option>official</option><option selected>reported</option><option>rumored</option></select></label>
+      <label>Certainty<select name="certainty"><option>official</option><option selected>reported</option></select></label>
     </div>
     <label>Source link<input name="source_url" type="url" placeholder="https://"></label>
     <label>Note<input name="summary"></label>

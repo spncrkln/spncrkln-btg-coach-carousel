@@ -23,4 +23,4 @@ Click **Upload tracker .xlsx** and pick the latest tracker. The file is parsed i
 
 ## Data
 
-All state is stored in the Netlify Blobs store `carousel`, under these keys: `moves`, `roster`, `meta` (scan history), `seen` (articles already read, kept 60 days), `backlog` (articles a run ran out of time for), and `teams` (ESPN logo directory, refreshed weekly).
+All state is stored in the Netlify Blobs store `carousel`, under these keys: `moves`, `roster`, `meta` (scan history), `deleted` (moves you deleted, so scans never recreate them), `seen` (articles already read, kept 60 days), `backlog` (articles a run ran out of time for), and `teams` (ESPN logo directory, refreshed weekly).
