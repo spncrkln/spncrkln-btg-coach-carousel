@@ -37,7 +37,7 @@ export default async (req, context) => {
     // Compact view of every card (for audits): one line per move, no source lists.
     if (path === "digest" && method === "GET") {
       const [moves, meta, del] = await Promise.all([getMoves(), getMeta(), getBlob("deleted", [])]);
-      const lines = moves.map((m) => [m.first_reported, m.row, m.coach_name, m.move_type, m.certainty, `${m.from_team || "?"} (${m.from_title || ""}) -> ${m.to_team || "-"} (${m.to_title || ""})`, m.status, `${m.source_count || (m.sources || []).length} src`, (m.sources || [])[0]?.title || ""].join(" | "));
+      const lines = moves.map((m) => [m.first_reported, m.row, m.coach_name, m.move_type, m.certainty, `${m.from_team || "?"} (${m.from_title || ""}) -> ${m.to_team || "-"} (${m.to_title || ""})`, m.status + (m.historical ? " HIST" : "") + (m.verified === false ? " UNVERIFIED" : ""), `${m.source_count || (m.sources || []).length} src`, (m.sources || [])[0]?.title || ""].join(" | "));
       const runs = (meta.runs || []).slice(0, 5).map((r) => ({ startedAt: r.startedAt, trigger: r.trigger, chain: r.chain, collected: r.collected, relevant: r.relevant, claudeCalls: r.claudeCalls, verifyCalls: r.verifyCalls, newMoves: r.newMoves, updatedMoves: r.updatedMoves, remaining: r.remaining, skips: r.skips, rejected: r.rejected, errors: r.errors }));
       return new Response([`schema ${meta.schema} · rechecked ${meta.rechecked || 0} · scanning ${!!meta.scanning} · ${moves.length} cards · ${del.length} deleted`, ...lines, "", JSON.stringify(runs, null, 1)].join("\n"), { headers: { "content-type": "text/plain", "cache-control": "no-store" } });
     }
