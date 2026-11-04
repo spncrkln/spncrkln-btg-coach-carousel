@@ -2,7 +2,7 @@ import { getRoster, getMoves, setMoves, getMeta, setMeta, setJSON } from "../lib
 import { cleanMoves, makeTeamCheck, tombstoneOf, firstReported } from "../lib/scan.mjs";
 import { getJSON as getBlob } from "../lib/store.mjs";
 
-const SCHEMA = 4;
+const SCHEMA = 5;
 async function teamCheck() { try { return makeTeamCheck((await getTeams()).teams); } catch { return () => false; } }
 import { getTeams } from "../lib/teams.mjs";
 import { MOVE_TYPES } from "../lib/claude.mjs";

@@ -131,3 +131,5 @@ dialog h2 { font: 800 30px/1 "Barlow Condensed"; text-transform: uppercase; marg
 .srcs .more summary::-webkit-details-marker { display: none; }
 .srcs .more[open] summary { margin-bottom: 4px; }
 .srcs .more { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
+
+.cert.single { color: var(--resigned); font-weight: 600; }

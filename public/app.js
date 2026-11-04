@@ -111,8 +111,12 @@ async function loadTeams() {
 function filtered() {
   const q = norm(S.q).trim();
   let list = S.moves.filter((m) => {
-    if (S.status === "active" && m.status === "dismissed") return false;
-    if (S.status && S.status !== "active" && m.status !== S.status) return false;
+    const main = m.verified !== false && !m.historical;
+    if (S.status === "active" && (m.status === "dismissed" || !main)) return false;
+    if (S.status === "unverified" && (m.verified !== false || m.historical || m.status === "dismissed")) return false;
+    if (S.status === "historical" && !m.historical) return false;
+    if (["new", "confirmed"].includes(S.status) && (m.status !== S.status || !main)) return false;
+    if (S.status === "dismissed" && m.status !== "dismissed") return false;
     if (S.typeOn.size && !S.typeOn.has(m.move_type)) return false;
     if (S.level && levelOf(m) !== S.level) return false;
     if (q) {
@@ -161,8 +165,15 @@ function renderHeader() {
   if (S.hasKey === false) { b.hidden = false; b.innerHTML = `<b>Almost ready.</b> Add <code>BTG_CAROUSEL_ANTHROPIC_API_KEY</code> in Netlify → Site configuration → Environment variables, then redeploy. Scans can't read articles until it's set.`; }
   else b.hidden = true;
 }
+function renderStatusCounts() {
+  const c = (f) => S.moves.filter(f).length;
+  const opt = (v, label, n) => { const o = document.querySelector(`#status option[value="${v}"]`); if (o) o.textContent = n === undefined ? label : `${label} (${n})`; };
+  opt("unverified", "Unverified · single source", c((m) => m.verified === false && !m.historical && m.status !== "dismissed"));
+  opt("historical", "Earlier deaths (before tracking)", c((m) => m.historical));
+}
 function renderStats() {
-  const act = S.moves.filter((m) => m.status !== "dismissed");
+  renderStatusCounts();
+  const act = S.moves.filter((m) => m.status !== "dismissed" && m.verified !== false && !m.historical);
   const week = Date.now() - 7 * 864e5;
   const c = (f) => act.filter(f).length;
   const items = [
@@ -199,7 +210,7 @@ function card(m) {
     <div class="head">
       <div><button class="coach" data-row="${m.row ?? ""}" data-name="${esc(m.coach_name)}">${esc(m.coach_name)}</button>
         <div class="rowtag">${m.row ? `Tracker <b>row ${m.row}</b>` : "Not linked to a row"}${tracker?.current ? ` · listed at ${esc(tracker.current)}` : ""}</div></div>
-      <div class="badges"><span class="type">${esc(m.move_type)}</span><span class="cert ${esc(m.certainty)}">${esc(m.certainty === "official" ? "official" : "reported")}</span></div>
+      <div class="badges"><span class="type">${esc(m.move_type)}</span><span class="cert ${esc(m.certainty)}">${esc(m.certainty === "official" ? "official" : "reported")}</span>${m.verified === false ? `<span class="cert single" title="Only one non-major outlet has reported this. It moves to the main feed automatically once a second outlet or a primary source confirms it.">single source</span>` : ""}${m.historical ? `<span class="cert">before tracking</span>` : ""}</div>
     </div>
     <div class="flow">
       <div class="side">${logo(m.from_team)}<div class="team">${esc(m.from_team || "Unknown")}</div><div class="ttl">${esc(m.from_title || "")}</div></div>

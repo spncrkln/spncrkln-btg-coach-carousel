@@ -172,6 +172,7 @@ function absorb(ex, m) {
   if (ex.status !== "dismissed" && m.status === "confirmed") ex.status = "confirmed";
   const fr = firstReported(ex);
   if (!ex.first_reported || (fr && fr < ex.first_reported)) ex.first_reported = fr;
+  tagMove(ex);
   ex.updated_at = new Date().toISOString();
 }
 
@@ -191,7 +192,8 @@ const isRecent = (m) => Date.now() - Date.parse(m.first_reported || m.effective_
 // Change it with the BTG_CAROUSEL_SINCE env var (YYYY-MM-DD). Article publish dates are never limited.
 const SINCE = () => process.env.BTG_CAROUSEL_SINCE || "2026-09-01";
 export const keepMove = (m, coach) =>
-  (m.move_type === "Passed Away" || !m.effective_date || m.effective_date >= SINCE()) &&
+  (m.move_type === "Passed Away" || !m.effective_date || m.effective_date >= SINCE()) && // deaths: kept, but pre-floor ones are marked historical
+
   (!alreadyInTracker(m, coach) || (m.is_new_development === true && isRecent(m)));
 
 // Generic "destinations" like "new coordinator" or "another program" are not teams.
@@ -213,6 +215,27 @@ export function genericTeam(name, isKnown = () => false) {
   if (isKnown(name)) return false;
   return GENERIC.test(x) || x.length < 3;
 }
+
+// ---------- corroboration ----------
+// A card shows by default only when 2+ different outlets report it, or one primary/major source does.
+const MAJOR = /(^|\.)(footballscoop\.com|espn\.com|cbssports\.com|nytimes\.com|theathletic\.com|apnews\.com|si\.com|sports\.yahoo\.com|foxsports\.com|nfl\.com|cfl\.ca|on3\.com|247sports\.com|usatoday\.com|nbcsports\.com|profootballtalk\.nbcsports\.com)$/;
+const MAJOR_NAMES = /^(footballscoop|espn|cbs sports|the athletic|associated press|ap news|sports illustrated|yahoo sports|fox sports|nfl com|cfl ca|on3|247sports|usa today|nbc sports|pro football talk)$/;
+export function outletOf(s) {
+  try {
+    const h = new URL(s.url).hostname.replace(/^www\./, "");
+    if (!/news\.google\.com|bing\.com/.test(h)) return h;
+  } catch {}
+  return t(s.source) || "unknown";
+}
+const isPrimary = (o) => MAJOR.test(o) || MAJOR_NAMES.test(o) || /\.edu$/.test(o) || /athletics|gopack|rolltide|seminoles|goheels/.test(o);
+export function isVerified(m) {
+  if (m.origin === "manual") return true;
+  const outlets = new Set((m.sources || []).filter((s) => s.news !== false).map(outletOf));
+  if (outlets.size >= 2) return true;
+  return [...outlets].some(isPrimary);
+}
+export const isHistorical = (m) => m.move_type === "Passed Away" && !!m.effective_date && m.effective_date < SINCE();
+const tagMove = (m) => { m.verified = isVerified(m); m.historical = isHistorical(m); m.outlets = new Set((m.sources || []).map(outletOf)).size; return m; };
 
 function newId(m) {
   const base = [m.row, m.move_type, t(m.to_team), t(m.from_team), m.first_reported, Math.random()].join("|");
@@ -238,7 +261,7 @@ export function buildMove(raw, coach, article, now) {
   if (CAT[m.move_type] === "death") m.to_team = null;
   m.first_reported = firstReported(m);
   m.id = newId(m);
-  return m;
+  return tagMove(m);
 }
 
 // Where does this move go? {kind:"merge", target} | {kind:"new"} | {kind:"skip", why}
@@ -292,8 +315,9 @@ export function cleanMoves(moves, roster, tombs = [], isKnown = () => false) {
       if (genericTeam(mm.to_team, isKnown)) continue;
       if (!keepMove(mm, byRow.get(mm.row))) continue;
     }
-    out.push(mm);
+    out.push(tagMove(mm));
   }
+  for (const m of out) tagMove(m);
   return out.sort((a, b) => String(b.first_reported).localeCompare(String(a.first_reported)) || String(b.found_at).localeCompare(String(a.found_at)));
 }
 
