@@ -11,6 +11,8 @@ export const SCOOP_PAGES = [
   "https://www.footballscoop.com/",
   ...[0, 1, 2, 3, 4, 5].map((p) => `https://www.footballscoop.com/team/jobs-scoop/feed?page=${p}`),
   ...[0, 1, 2].map((p) => `https://www.footballscoop.com/team/scoop/feed?page=${p}`),
+  // Carousel Scoop: FootballScoop's coaching-carousel hub (hires, firings, searches, plus its carousel table).
+  ...[0, 1, 2, 3, 4, 5].map((p) => `https://www.footballscoop.com/team/carousel-scoop/feed?page=${p}`),
 ];
 
 const BROAD = [

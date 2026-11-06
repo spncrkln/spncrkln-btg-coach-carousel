@@ -5,7 +5,7 @@ Tracks job changes (hires, firings, promotions, title changes, retirements, and 
 ## How it works
 
 1. **Every 4 hours** (`netlify/functions/scan-scheduled.mjs`), or when you press **Scan now**, a background function (`scan-background.mjs`, up to 15 min) starts a scan.
-2. It collects headlines from FootballScoop (homepage and Jobs Scoop pages), ESPN's college and NFL RSS feeds, and Google News searches covering 247Sports, On3, school press releases, and NFL and CFL staff news. Edit the list in `netlify/lib/sources.mjs`.
+2. It collects headlines from FootballScoop (homepage, Jobs Scoop, Scoop, and Carousel Scoop pages), ESPN's college and NFL RSS feeds, and Google News searches covering 247Sports, On3, school press releases, and NFL and CFL staff news. Edit the list in `netlify/lib/sources.mjs`.
 3. Headlines that aren't about coaching are dropped. FootballScoop articles are opened in full, and only articles that mention a tracker coach by name (nicknames included, e.g. Mike/Michael) move on.
 4. Claude reads each of those articles, along with the matching coaches' tracker history, and returns structured moves with a match-confidence explanation. Same-name players and administrators are rejected.
 5. Moves are saved permanently in Netlify Blobs. When a move is already on file, new articles get added to it as extra sources.
