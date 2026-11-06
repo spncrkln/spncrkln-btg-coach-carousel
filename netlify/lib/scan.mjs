@@ -440,7 +440,7 @@ export async function runScan(trigger = "manual", opts = {}) {
     const left = relevant.filter((it) => !seen[it.key]).slice(0, 2000)
       .map(({ url, title, source, date, text, needsBody, key, agg }) => ({ url, title, source, date, text: (text || "").slice(0, 30000), needsBody, key, agg }));
     log.remaining = left.length;
-    const cutoff = Date.now() - 60 * 864e5;
+    const cutoff = Date.now() - 400 * 864e5; // long memory so deep FootballScoop pages are never re-read
     for (const k of Object.keys(seen)) if (Date.parse(seen[k]) < cutoff) delete seen[k];
     await Promise.all([setJSON("seen", seen), setJSON("backlog", left)]);
   } catch (e) {
